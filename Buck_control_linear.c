@@ -3,7 +3,7 @@
 #include <math.h>
 
 // --------------------------------------------------
-// กำหนดพารามิเตอร์ของวงจรและตัวควบคุม
+// Buck parameters
 // --------------------------------------------------
 #define VIN  50    // แรงดันอินพุต (V)
 #define L    15e-3  // ค่าตัวเหนี่ยวนำ (H) - 100uH
@@ -18,7 +18,7 @@
 #define VREF 20.0    // แรงดันอ้างอิง (V)
 
 // --------------------------------------------------
-// พารามิเตอร์การจำลอง
+// SMC parameter
 // --------------------------------------------------
 #define T_SIM   0.5      // เวลาจำลองทั้งหมด (s) - อาจจะต้องนานขึ้นเพื่อให้ระบบเข้าสู่ steady-state
 #define DT      1e-6     // ขั้นตอนเวลา (s) - 1us
@@ -26,11 +26,10 @@
 #define PRINT_INTERVAL 1 // พิมพ์ผลลัพธ์ทุกๆ X ขั้นตอน (เพื่อไม่ให้ไฟล์ใหญ่เกินไป)
 
 // --------------------------------------------------
-// ฟังก์ชันที่แทนสมการ State-Space (dy/dt = f(t, y))
-// ในที่นี้ y คือ [iL, vC]
+// State-Space (dy/dt = f(t, y))
+// y is [iL, vC]
 // f_vector[0] = di_L/dt
 // f_vector[1] = dv_C/dt
-// D คือ Duty Cycle ที่คำนวณจากภายนอกฟังก์ชันนี้
 // --------------------------------------------------
 void buck_converter_equations(double iL, double vC, double D_val, double* f_vector) {
     f_vector[0] = (D_val * VIN - vC) / L;       // di_L/dt
@@ -45,13 +44,13 @@ int main() {
     double vC_current = 0.0; // แรงดันตัวเก็บประจุเริ่มต้น (V)
 
     // --------------------------------------------------
-    // ตัวแปรสำหรับอนุพันธ์และ Duty Cycle
+    // Initial value of state variables
     // --------------------------------------------------
     double d_states[2]; // d_states[0] = di_L/dt, d_states[1] = dv_C/dt
-    double current_D;   // ค่า Duty Cycle ที่จะคำนวณในแต่ละขั้นตอน
+    double current_D;   // Duty Cycle 
 
     // --------------------------------------------------
-    // คำนวณสัมประสิทธิ์ x1, x2, x3 ครั้งเดียวเนื่องจากเป็นค่าคงที่
+    // Calculate the coefficients x1, x2, x3
     // --------------------------------------------------
     double x1, x2, x3;
     x1 = (a * R * C + b * L + a * L * K + m * R * L * C * (-K - 1)) / (a * R * C);
@@ -61,7 +60,7 @@ int main() {
     printf("สัมประสิทธิ์ x1: %.6f, x2: %.6f, x3: %.6f\n", x1, x2, x3);
 
     // --------------------------------------------------
-    // เปิดไฟล์สำหรับบันทึกผลลัพธ์
+    //Save the results. (CSV file)
     // --------------------------------------------------
     FILE *fp = fopen("buck_controlled_simulation_results.csv", "w");
     if (fp == NULL) {
@@ -69,61 +68,48 @@ int main() {
         return EXIT_FAILURE;
     }
     
-    //fprintf(fp, "Time(s),Inductor_Current(A),Capacitor_Voltage(V),Duty_Cycle(D)\n");
-
-    printf("เริ่มการจำลองวงจรบัคพร้อมตัวควบคุม...\n");
-    printf("พารามิเตอร์: Vin=%.1fV, L=%.1fuH, C=%.1fuF, R=%.1fOhm, Vref=%.1fV\n",
-           VIN, L*1e6, C*1e6, R, VREF);
-    printf("เวลาจำลอง: %.3fs, ขั้นตอนเวลา: %.1fus, จำนวนขั้นตอน: %d\n",
-           T_SIM, DT*1e6, N_STEPS);
-
+    printf("Start buck simulation with controller...\n");
+    printf("Parameter: Vin=%.1fV, L=%.1fuH, C=%.1fuF, R=%.1fOhm, Vref=%.1fV\n",VIN, L*1e6, C*1e6, R, VREF);
     // --------------------------------------------------
-    // ลูปการจำลองโดยใช้วิธีของออยเลอร์
+    // Simulation loop using Euler's method
     // --------------------------------------------------
     for (int i = 0; i < N_STEPS; i++) {
         double current_time = i * DT;
 
-        // 1. คำนวณ Duty Cycle 'D' ณ เวลาปัจจุบัน
-        // Vdc ในสมการของคุณน่าจะเป็น vC_current (แรงดันเอาต์พุตปัจจุบัน)
-        // IL ในสมการของคุณน่าจะเป็น iL_current (กระแสตัวเหนี่ยวนำปัจจุบัน)
+        // 1. Calculate Duty Cycle 'D' at the current time
+        // Vdc in your equation should be vC_current (current output voltage)
+        // IL in your equation should be iL_current (current inductor current)
         current_D = (vC_current / VIN) * x1 - (iL_current / VIN) * x2 + (VREF / VIN) * x3;
 
-        // **ข้อควรระวัง:** Duty Cycle ต้องอยู่ระหว่าง 0 ถึง 1
-        // หากการคำนวณให้ค่า D นอกช่วงนี้ อาจเกิดปัญหาในการจำลอง
-        // ควรมีการจำกัดค่า (Clamping)
+        // **Caution:** Duty Cycle must be between 0 and 1
+        // If the calculation gives a value of D outside this range, there may be a problem in the simulation
+        // Clamping should be applied
         if (current_D > 1.0) {
             current_D = 1.0;
         } else if (current_D < 0.0) {
             current_D = 0.0;
         }
 
-        // 2. คำนวณอนุพันธ์ที่จุดเวลาปัจจุบันโดยใช้ D ที่คำนวณได้
+        // 2. Calculate the derivative at the current time point using the calculated D.
         buck_converter_equations(iL_current, vC_current, current_D, d_states);
 
-        // 3. อัปเดตตัวแปรสถานะสำหรับขั้นตอนถัดไป (Euler's Method)
+        // 3. Update state variables for next step (Euler's Method)
         iL_current += d_states[0] * DT;
         vC_current += d_states[1] * DT;
 
-        // 4. บันทึกผลลัพธ์
+        // 4. Save the results.
         if (i % PRINT_INTERVAL == 0) {
             fprintf(fp, "%.6f\n", vC_current);
         }
     }
-
-    // บันทึกผลลัพธ์สุดท้าย
+    // Save the final result
     fprintf(fp, "%.6f\n", T_SIM,vC_current);
-
     fclose(fp);
-    printf("การจำลองเสร็จสิ้น! ผลลัพธ์ถูกบันทึกใน buck_controlled_simulation_results.csv\n");
-
-    printf("\nค่า Steady-State ที่คาดหวัง:\n");
-    printf("  แรงดันเอาต์พุต (Vout): %.3f V (ควรเข้าใกล้ VREF หากตัวควบคุมทำงานได้ดี)\n", VREF);
-    printf("  กระแสตัวเหนี่ยวนำ (IL): %.3f A (VREF / R)\n", VREF / R);
-    printf("  ค่าที่ได้จากการจำลอง (สุดท้าย):\n");
-    printf("  แรงดันเอาต์พุต (vC): %.3f V\n", vC_current);
-    printf("  กระแสตัวเหนี่ยวนำ (iL): %.3f A\n", iL_current);
-    printf("  Duty Cycle (สุดท้าย): %.3f\n", current_D);
-
+    printf("Simulation completed! Results saved in buck_controlled_simulation_results.csv\n");
+    printf("\nExpected Steady-State Value:\n");
+    printf("  Output voltage (Vout): %.3f V \n", VREF);
+    printf("  vC: %.3f V\n", vC_current);
+    printf("  iL: %.3f A\n", iL_current);
 
     return EXIT_SUCCESS;
 }
